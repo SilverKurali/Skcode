@@ -1,0 +1,120 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "skcode: tsup watch (debug)",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/.vscode/tsup-watch.mjs"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "skcode-debug"
+      },
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "\\[HOST\\] CLI Watching for changes in"
+        }
+      }
+    },
+    {
+      "label": "skcode: vite dev",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/.vscode/vite-dev.mjs"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "skcode-debug"
+      },
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "VITE v.*ready in .*"
+        }
+      }
+    },
+    {
+      "label": "skcode: prepare desktop debug",
+      "dependsOn": ["skcode: tsup watch (debug)", "skcode: vite dev"],
+      "dependsOrder": "parallel"
+    },
+    {
+      "label": "skcode: start electron (debug)",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/.vscode/start-electron.mjs"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "dependsOn": ["skcode: prepare desktop debug"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "skcode-debug"
+      },
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Debugger listening on ws://127\\.0\\.0\\.1:9231/"
+        }
+      }
+    },
+    {
+      "label": "skcode: start electron (debug with host inspect)",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/.vscode/start-electron.mjs", "--host-inspect"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "dependsOn": ["skcode: prepare desktop debug"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "skcode-debug"
+      },
+      "problemMatcher": {
+        "owner": "custom",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Debugger listening on ws://127\\.0\\.0\\.1:9231/"
+        }
+      }
+    }
+  ]
+}

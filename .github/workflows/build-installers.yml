@@ -1,0 +1,255 @@
+# 构建全平台安装包：macOS(arm64/x64) + Windows(x64/arm64) + Linux(x64/arm64)
+# 触发方式：手动运行（workflow_dispatch）或推送 v* 标签。
+# 产物上传为 workflow artifacts，全平台成功后再统一发布为 GitHub Release
+# （Release 的 tag 名为 v<package.json.version>）；Linux 系列在命名上标注 beta。
+name: build-installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: build-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # release job 用 GITHUB_TOKEN 创建 Release 并上传安装包；report-failure job 用它提 issue。
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    name: "${{ matrix.os-label }} ${{ matrix.arch-label }}"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS（Apple 芯片）
+          - runner: macos-14
+            os: mac
+            arch: arm64
+            os-label: macOS
+            arch-label: arm64
+            skip-remote: false
+            cache-path: |
+              ~/Library/Caches/electron
+              ~/Library/Caches/electron-builder
+          # macOS（Intel 芯片）：node-pty 与 window-bounds helper 都是宿主架构编译，
+          # 但 node-pty 的 darwin-x64 预编译随包自带，electron-builder 会使用它；
+          # macos-13 (Intel) runner 长期无法被调度（2026-09 实测排队 20+ 分钟），
+          # 故改用 macos-14 交叉出 x64 包 —— 代价是 dmg 内的 window-bounds 吸附辅助
+          # 二进制为 arm64（watcher fail-open，缺失时仅不吸附，不影响功能）。
+          - runner: macos-14
+            os: mac
+            arch: x64
+            os-label: macOS
+            arch-label: x64
+            skip-remote: false
+            cache-path: |
+              ~/Library/Caches/electron
+              ~/Library/Caches/electron-builder
+          # Windows（64 位）
+          - runner: windows-latest
+            os: win
+            arch: x64
+            os-label: Windows
+            arch-label: x64
+            skip-remote: true
+            cache-path: |
+              ~/AppData/Local/electron/Cache
+              ~/AppData/Local/electron-builder/Cache
+          # Windows（ARM64）：node-pty@1.1.0 自带 win32-arm64 预编译，
+          # electron-builder 在 x64 runner 上交叉产出 arm64 NSIS 安装包。
+          - runner: windows-latest
+            os: win
+            arch: arm64
+            os-label: Windows
+            arch-label: arm64
+            skip-remote: true
+            cache-path: |
+              ~/AppData/Local/electron/Cache
+              ~/AppData/Local/electron-builder/Cache
+          # Linux x64（Beta）
+          - runner: ubuntu-24.04
+            os: linux
+            arch: x64
+            os-label: Linux
+            arch-label: x64
+            beta: true
+            skip-remote: false
+            cache-path: |
+              ~/.cache/electron
+              ~/.cache/electron-builder
+          # Linux ARM64（Beta）：GitHub 原生 arm64 runner，避免交叉打包 fpm 工具的兼容性抖动。
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            os-label: Linux
+            arch-label: arm64
+            beta: true
+            skip-remote: false
+            cache-path: |
+              ~/.cache/electron
+              ~/.cache/electron-builder
+
+    env:
+      # 不设 SKCODE_ENV 会按 test（Preview 身份 + _TEST 后缀）打包；
+      # 正式安装包必须显式 production，产物名才是 Skcode-<version>-<os>-<arch>.<ext>。
+      SKCODE_ENV: production
+      SKCODE_TARGET_OS: ${{ matrix.os }}
+      SKCODE_TARGET_ARCH: ${{ matrix.arch }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Cache Electron runtime & builder binaries
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ matrix.cache-path }}
+          key: ${{ runner.os }}-electron-41.0.3-builder-26.8.1
+
+      # deb/rpm/pacman 都走 electron-builder 内置 fpm：rpm 需要 rpmbuild 与 xz，
+      # deb 需要 fakeroot，pacman 的 .pkg.tar.zst 需要 bsdtar 与 zstd。
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm xz-utils fakeroot zstd libarchive-tools
+
+      # 本仓库没有 .gitmodules，不要跑 pnpm bootstrap（其第一步 git submodule 会失败）。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm run build:bootstrap
+
+      - name: Bundle installers
+        env:
+          # 桌面安装包不依赖 mock-cdn remote 资产；Windows 跳过以缩短 CI 时间（沿用原 CI 约定）。
+          SKCODE_SKIP_REMOTE_ASSETS: ${{ matrix.skip-remote && '1' || '' }}
+        run: pnpm bundle:desktop -- --os "${{ matrix.os }}" --arch "${{ matrix.arch }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ format('Skcode-{0}-{1}{2}', matrix.os-label, matrix.arch-label, matrix.beta && '-beta' || '') }}
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.exe
+            packages/desktop/dist/*.AppImage
+            packages/desktop/dist/*.deb
+            packages/desktop/dist/*.rpm
+            packages/desktop/dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          path: release-artifacts
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(node -p 'require("./package.json").version')"
+          notes="$(sed -E 's/^ {10}//' <<'NOTES'
+          ### 安装包
+
+          | 平台 | 架构 | 文件 |
+          | --- | --- | --- |
+          | macOS | Apple 芯片 (arm64) | `Skcode-*-mac-arm64.dmg` |
+          | macOS | Intel 芯片 (x64) | `Skcode-*-mac-x64.dmg` |
+          | Windows | 64 位 (x64) | `Skcode-*-win-x64.exe` |
+          | Windows | ARM64 | `Skcode-*-win-arm64.exe` |
+          | Linux (Beta) | x64 | `.AppImage` / `.deb` / `.rpm` |
+          | Linux (Beta) | ARM64 | `.AppImage` / `.deb` / `.rpm` |
+
+          Linux 系列当前标记 Beta。macOS/Windows 安装包未签名，首次打开需在系统弹窗中确认。
+          NOTES
+          )"
+          # -print0 + mapfile 数组：避免 unquoted $files 在部分 shell 环境被当作 glob 展开
+          #（此前在 runner 上触发过 zsh 风格 "no matches found" 报错，导致两步连续的坑）。
+          find release-artifacts -type f -print0 | sort -z > /tmp/files.list
+          mapfile -d '' files < /tmp/files.list
+          printf 'files=%s\n' "${#files[@]}"
+          printf '%s\n' "${files[@]}" | sed 's/^/  - /'
+          if gh release view "$version" >/dev/null 2>&1; then
+            gh release upload "$version" "${files[@]}" --clobber
+          else
+            gh release create "$version" "${files[@]}" --title "Skcode $version" --notes "$notes"
+          fi
+
+  report-failure:
+    name: File build failure issue
+    needs: build
+    if: failure() && needs.build.result != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Collect failure logs
+        run: |
+          mkdir -p failure-logs
+          gh run view "${{ github.run_id }}" --log-failed > failure-logs/failed.log 2>&1 || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create or update failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(node -p 'require("./package.json").version')"
+          run_id="${{ github.run_id }}"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          title="安装包构建失败 ${version} (run ${run_id})"
+          failed_jobs="$(
+            gh api "repos/${{ github.repository }}/actions/runs/${run_id}/jobs" \
+              --jq '.jobs[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")) | "\(.name) — \(.conclusion)"'
+          )"
+          {
+            echo "### 构建失败（自动上报）"
+            echo ""
+            echo "工作流运行: ${run_url}"
+            echo ""
+            echo "失败 job:"
+            if [ -n "$failed_jobs" ]; then
+              echo "$failed_jobs" | sed 's/^/- /'
+            else
+              echo "- （未能从 API 取到失败明细）"
+            fi
+            echo ""
+            echo "### 失败日志（截断 6KB）"
+            echo '```'
+            head -c 6000 failure-logs/failed.log
+            echo '```'
+          } > issue-body.md
+          existing="$(
+            gh issue list --state open --search "$title" --json number --jq '.[0].number // empty'
+          )"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+            echo "已追加评论到现有 issue #$existing"
+          else
+            gh issue create --title "$title" --body-file issue-body.md
+          fi

@@ -1,0 +1,27 @@
+import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
+import { useSkillStore } from "@/store/skillStore.js";
+import { useSubagentsStore } from "@/store/subagentsStore.js";
+import { useWhiteboardStore } from "@/store/whiteboardStore.js";
+import { useSkcodeSessionStore } from "@/store/skcodeSessionStore.js";
+
+declare global {
+  interface Window {
+    __skillStoreE2E?: typeof useSkillStore;
+    __subagentsStoreE2E?: typeof useSubagentsStore;
+    __whiteboardStoreE2E?: typeof useWhiteboardStore;
+    __skcodeSessionStoreE2E?: typeof useSkcodeSessionStore;
+  }
+}
+
+export function registerE2EStoreBridges() {
+  if (!shouldExposeE2EStoreBridge()) {
+    return;
+  }
+
+  // 部分 E2E 从设置页、错误页或特殊路由启动时，不一定自然 import
+  // 对应 store 模块。renderer bootstrap 显式注册，保证 preflight 和测试注入稳定。
+  window.__skcodeSessionStoreE2E = useSkcodeSessionStore;
+  window.__skillStoreE2E = useSkillStore;
+  window.__subagentsStoreE2E = useSubagentsStore;
+  window.__whiteboardStoreE2E = useWhiteboardStore;
+}

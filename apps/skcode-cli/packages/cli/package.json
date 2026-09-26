@@ -1,0 +1,40 @@
+{
+  "name": "@skcode/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Main CLI application for skcode",
+  "bin": {
+    "skcode": "./dist/skcode.cjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/skcode.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:desktop-agent": "node scripts/build.mjs --desktop-agent",
+    "build:sea": "pnpm --dir ../../../.. exec turbo --skip-infer --cwd apps/skcode-cli run build --filter=!@skcode/cli --force && pnpm build && node scripts/build-sea.mjs --all",
+    "sea": "node scripts/build-sea.mjs",
+    "upload:sea": "node scripts/upload-sea-smb.mjs",
+    "clean": "node ../../scripts/clean-dist.mjs",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint --write src"
+  },
+  "dependencies": {
+    "@skcode/adapters": "workspace:*",
+    "@skcode/bootstrap": "workspace:*",
+    "@skcode/contracts": "workspace:*",
+    "@skcode/core": "workspace:*",
+    "@skcode/dynamic-workflow-runtime": "workspace:*",
+    "@skcode/i18n": "workspace:*",
+    "@skcode/provider-node": "workspace:*",
+    "@skcode/shared": "workspace:*",
+    "@skcode/shared-types": "workspace:*",
+    "@skcode/tui": "workspace:*",
+    "dotenv": "^17.4.2",
+    "playwright-core": "1.59.1"
+  }
+}
